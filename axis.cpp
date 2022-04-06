@@ -159,7 +159,7 @@ struct sCamera
 	vf3d rot;
 };
 
-sCamera vCamera = { 0, 0, -3 };
+sCamera vCamera = { { 0.0f, 0.0f, 1.7f }, { 70.0f, 0.0f, -40.0f } };
 
 void RotateCamera(HWND* hWnd)
 {
@@ -176,6 +176,20 @@ void RotateCamera(HWND* hWnd)
 	};
 
 	if (GetForegroundWindow() != *hWnd) return;
+
+	float fAngle = -vCamera.rot.z / 180.0f * PI;
+	float fSpeed = 0.0f;
+
+	if (GetKeyState('W') < 0) fSpeed = 0.1f;
+	if (GetKeyState('S') < 0) fSpeed = -0.1f;
+	if (GetKeyState('A') < 0) { fSpeed = 0.1f; fAngle -= PI / 2.0f; }
+	if (GetKeyState('D') < 0) { fSpeed = 0.1f; fAngle += PI / 2.0f; }
+
+	if (fSpeed != 0.0f)
+	{
+		vCamera.pos.x += sin(fAngle) * fSpeed;
+		vCamera.pos.y += cos(fAngle) * fSpeed;
+	}
 
 	static POINT base = { nScreenWidth / 2, nScreenHeight / 2 };
 	rotate((base.y - fMouseY) / 5.0f, (base.x - fMouseX) / 5.0f);
@@ -195,9 +209,9 @@ bool OnUserCreate()
 
 bool OnUserUpdate(HWND* hWnd)
 {
-	glTranslatef(vCamera.pos.x, vCamera.pos.y, vCamera.pos.z);
 	glRotatef(-vCamera.rot.x, 1, 0, 0);
 	glRotatef(-vCamera.rot.z, 0, 0, 1);
+	glTranslatef(-vCamera.pos.x, -vCamera.pos.y, -vCamera.pos.z);
 
 	RotateCamera(hWnd);
 
@@ -210,24 +224,6 @@ bool OnUserUpdate(HWND* hWnd)
 			glVertex3f(t.v[2].x, t.v[2].y, t.v[2].z);
 		}
 	glEnd();
-
-	if (keys[VK_LEFT].bPressed)
-		vCamera.pos.x += 0.1f;
-
-	if (keys[VK_RIGHT].bPressed)
-		vCamera.pos.x -= 0.1f;
-
-	if (keys[VK_UP].bPressed)
-		vCamera.pos.y -= 0.1f;
-
-	if (keys[VK_DOWN].bPressed)
-		vCamera.pos.y += 0.1f;
-
-	if (keys[L'W'].bPressed)
-		vCamera.pos.z += 0.1f;
-
-	if (keys[L'S'].bPressed)
-		vCamera.pos.z -= 0.1f;
 	
 	return true;
 }
@@ -335,7 +331,6 @@ int main(HINSTANCE, HINSTANCE, LPSTR, INT)
 
 	glEnable(GL_DEPTH_TEST);
 
-	//glOrtho(0, nScreenWidth, nScreenHeight, 0, 0, 1);
 	glFrustum(-1, 1, -1, 1, 2, 80);
 
 	if (!OnUserCreate())
