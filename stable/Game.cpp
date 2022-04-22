@@ -1,18 +1,50 @@
-﻿#include "Poison.h"
+#include "Poison.h"
+
+#include <map>
+#include <fstream>
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 
 #define BLOCK_SIZE 1.0f
 #define PLAYER_HEIGHT 4.0f
 
-#define OUTPUT_WIDTH 40
-#define OUTPUT_HEIGHT 40
+#define OUTPUT_WIDTH 30
+#define OUTPUT_HEIGHT 15
 
 struct sCamera
 {
 	def::vf3d pos;
-	def::vf3d rot;
+	float scale;
+};
 
-	float speed;
-	float vel;
+struct sTile
+{
+	bool isEmpty;
+	int height;
+
+	int textureIndex;
+	GLuint texture;
+	float textureAngle; // in degrees
+};
+
+struct sImage
+{
+	unsigned char* data;
+
+	int width;
+	int height;
+	int channels;
+};
+
+enum TILES
+{
+	GRASS,
+	ROAD_TILE,
+	ROAD,
+	ROAD_CROSSWALK,
+	INTERSECTION,
+	RIGHT_ROAD
 };
 
 class Example : public def::Poison
@@ -20,143 +52,330 @@ class Example : public def::Poison
 protected:
 	bool Start() override
 	{
-		float fLightPos[] = { 0.0f, 0.0f, 10.0f, 0.0f };
-		glLightfv(GL_LIGHT0, GL_POSITION, fLightPos);
+		for (int i = -OUTPUT_WIDTH * OUTPUT_HEIGHT; i < OUTPUT_WIDTH * OUTPUT_HEIGHT; i++)
+			tWorld[i] = { true, 0, -1, GRASS, 0.0f };
 
-		srand(time(NULL));
+		textures[GRASS] = LoadTexture("sprites/grass.jpg");
+		textures[ROAD_TILE] = LoadTexture("sprites/road_tile.jpg");
+		textures[ROAD] = LoadTexture("sprites/horizontal.jpg");
+		textures[ROAD_CROSSWALK] = LoadTexture("sprites/horizontal_crosswalk.jpg");
+		textures[INTERSECTION] = LoadTexture("sprites/intersection.jpg");
+		textures[RIGHT_ROAD] = LoadTexture("sprites/right.jpg");
 
-		for (int i = 0; i < OUTPUT_WIDTH; i++)
-			for (int j = 0; j < OUTPUT_HEIGHT; j++)
-				fPerlinSeed2D[i][j] = (float)rand() / (float)RAND_MAX;
+		LoadLevel("1.lvl");
 
-		DoPerlinNoise2D(nOctaves, fScaleBias);
-
-		ShowCursor(false);
-		
 		return true;
 	}
 
 	bool Update() override
 	{
-		glRotatef(-vCamera.rot.x, 1, 0, 0);
-		glRotatef(-vCamera.rot.z, 0, 0, 1);
+		glScalef(vCamera.scale, vCamera.scale, 1.0f);
 		glTranslatef(-vCamera.pos.x, -vCamera.pos.y, -vCamera.pos.z);
 
-		RotateCamera();
+		if (GetKey(VK_LBUTTON).bPressed)
+		{
+			int p = vSelectedArea.y * OUTPUT_WIDTH + vSelectedArea.x;
 
-		if (vCamera.vel > 0.2f)
-			vCamera.vel = 0.2f;
+			tWorld[p].isEmpty = false;
+			tWorld[p].height++;
 
-		vCamera.pos.z -= vCamera.vel;
+			if (tWorld[p].height > 4)
+				tWorld[p].height = 4;
+		}
 
-		for (int x = 0; x < OUTPUT_WIDTH; x++)
-			for (int y = 0; y < OUTPUT_HEIGHT; y++)
-				for (int z = 0; z < 64; z++)
+		if (GetKey(VK_RBUTTON).bPressed)
+		{
+			int p = vSelectedArea.y * OUTPUT_WIDTH + vSelectedArea.x;
+
+			tWorld[p].height--;
+
+			if (tWorld[p].height <= 0)
+			{
+				tWorld[p].isEmpty = true;
+				tWorld[p].height = 0;
+			}
+		}
+
+		if (GetKey(L'E').bPressed)
+		{
+			int p = vSelectedArea.y * OUTPUT_WIDTH + vSelectedArea.x;
+
+			if (tWorld[p].textureIndex < 4)
+			{
+				tWorld[p].textureIndex++;
+				tWorld[p].texture = textures[tWorld[p].textureIndex];
+			}
+		}
+
+		if (GetKey(L'Q').bPressed)
+		{
+			int p = vSelectedArea.y * OUTPUT_WIDTH + vSelectedArea.x;
+
+			if (tWorld[p].textureIndex > -1)
+			{
+				tWorld[p].textureIndex--;
+				tWorld[p].texture = textures[tWorld[p].textureIndex];
+			}
+		}
+
+		if (GetKey(L'O').bPressed)
+		{
+			int p = vSelectedArea.y * OUTPUT_WIDTH + vSelectedArea.x;
+			tWorld[p].textureAngle -= 90.0f;
+		}
+
+		if (GetKey(L'P').bPressed)
+		{
+			int p = vSelectedArea.y * OUTPUT_WIDTH + vSelectedArea.x;
+			tWorld[p].textureAngle += 90.0f;
+		}
+
+		if (GetKey(L'Z').bHeld)
+			vCamera.scale += 0.1f;
+
+		if (GetKey(L'X').bHeld)
+			vCamera.scale -= 0.1f;
+
+		if (vCamera.scale < 0.1f)
+			vCamera.scale = 0.1f;
+
+		if (GetKey(VK_LEFT).bHeld)
+			vCamera.pos.x -= 0.001f * OUTPUT_WIDTH;
+
+		if (GetKey(VK_RIGHT).bHeld)
+			vCamera.pos.x += 0.001f * OUTPUT_WIDTH;
+
+		if (GetKey(VK_DOWN).bHeld)
+			vCamera.pos.y -= 0.001f * OUTPUT_HEIGHT;
+
+		if (GetKey(VK_UP).bHeld)
+			vCamera.pos.y += 0.001f * OUTPUT_HEIGHT;
+
+		if (GetKey(L'A').bPressed)
+			vSelectedArea.x -= 1;
+
+		if (GetKey(L'D').bPressed)
+			vSelectedArea.x += 1;
+
+		if (GetKey(L'S').bPressed)
+			vSelectedArea.y -= 1;
+
+		if (GetKey(L'W').bPressed)
+			vSelectedArea.y += 1;
+
+		DrawSelectedArea();
+
+		for (int i = -OUTPUT_WIDTH / 2; i < OUTPUT_WIDTH / 2; i++)
+			for (int j = -OUTPUT_HEIGHT / 2; j < OUTPUT_HEIGHT / 2; j++)
+			{
+				if (!tWorld[j * OUTPUT_WIDTH + i].isEmpty)
 				{
-					if (bWorld[x][y][z])
-					{
-						if (x <= vCamera.pos.x && y <= vCamera.pos.y && vCamera.pos.x <= x + BLOCK_SIZE && vCamera.pos.y <= y + BLOCK_SIZE)
-						{
-							if (z + PLAYER_HEIGHT > vCamera.pos.z && vCamera.pos.z - PLAYER_HEIGHT / 2.0f > z)
-							{
-								vCamera.pos.z = z + PLAYER_HEIGHT;
-								vCamera.vel = 0.0f;
-								vCamera.speed = 0.0f;
-								bJumpActive = false;
-								bJumpEnds = false;
-							}
-						}						
-						
-						DrawCube(x, y, z);
-					}
+					for (int k = 0; k < tWorld[j * OUTPUT_WIDTH + i].height; k++)
+						DrawCube(i, j, k);
 				}
 
-		if (bJumpActive)
-		{
-			if (vCamera.vel > -0.3f && !bJumpEnds)
-			{
-				vCamera.speed = 0.05f;
-				vCamera.vel -= 0.04f;
+				DrawTile(i, j, textures[tWorld[j * OUTPUT_WIDTH + i].texture], tWorld[j * OUTPUT_WIDTH + i].textureAngle);
 			}
-			else
-			{
-				bJumpEnds = true;
-				vCamera.vel += 0.03f;
-			}
-		}
-		else
-		{
-			vCamera.speed = GetKey(VK_SHIFT).bHeld ? 0.05f : 0.0f;
-			
-			if (GetKey(VK_SPACE).bHeld)
-			{
-				vCamera.vel -= 0.1f;
-				bJumpActive = true;
-			}
-		}
 
-		vCamera.vel += 0.03f * !bJumpActive;
-		
 		return true;
 	}
 
-private:
-	bool bWorld[OUTPUT_WIDTH][OUTPUT_HEIGHT][64];
-	float fPerlinSeed2D[OUTPUT_WIDTH][OUTPUT_HEIGHT];
+	void Destroy() override
+	{
+		glDisable(GL_TEXTURE_2D);
+	}
 
-	const float fScaleBias = 1.0f;
-	const float nOctaves = 12;
+private:
+	std::map<int, sTile> tWorld;
 
 	sCamera vCamera = {
-		{ 5.0f, 5.0f, 10.0f },
-		{ 70.0f, 0.0f, -40.0f },
-		0.0f, 0.0f
+		{ 0.0f, 0.0f, 10.0f },
+		1.0f
 	};
 
-	bool bJumpActive = false;
-	bool bJumpEnds = false;
+	def::vi2d vSelectedArea = { 0, 0 };
 
-	void RotateCamera()
+	GLuint textures[6];
+
+	void LoadLevel(const char* filename)
 	{
-		if (!IsFocused()) return;
+		std::ifstream file;
+		file.open(filename, std::ios::in);
 
-		auto rotate = [&](float xAngle, float zAngle)
+		if (!file.is_open())
 		{
-			vCamera.rot.x += xAngle;
-			vCamera.rot.z += zAngle;
-
-			if (vCamera.rot.x < 0.0f) vCamera.rot.x = 0.0f;
-			if (vCamera.rot.x > 180.0f) vCamera.rot.z = 180.0f;
-
-			if (vCamera.rot.z < 0.0f) vCamera.rot.z += 360.0f;
-			if (vCamera.rot.z > 360.0f) vCamera.rot.z -= 360.0f;
-		};
-
-
-		float fAngle = -vCamera.rot.z / 180.0f * def::PI;
-		float fSpeed = 0.0f;
-
-		if (GetKey(L'W').bHeld) fSpeed = 0.1f + vCamera.speed;
-		if (GetKey(L'S').bHeld) fSpeed = -0.1f;
-		if (GetKey(L'A').bHeld) { fSpeed = 0.1f; fAngle -= def::PI / 2.0f; }
-		if (GetKey(L'D').bHeld) { fSpeed = 0.1f; fAngle += def::PI / 2.0f; }
-
-		if (fSpeed != 0.0f)
-		{
-			float x = vCamera.pos.x + sinf(fAngle) * fSpeed;
-			float y = vCamera.pos.y + cosf(fAngle) * fSpeed;
-			float z = vCamera.pos.z;
-
-			if (!bWorld[(int)x][(int)vCamera.pos.y][int(z - PLAYER_HEIGHT) + 1])
-				vCamera.pos.x = x;
-
-			if (!bWorld[(int)vCamera.pos.x][(int)y][int(z - PLAYER_HEIGHT) + 1])
-				vCamera.pos.y = y;
+			file.close();
+			return;
 		}
 
-		static POINT base = { GetScreenWidth() / 2, GetScreenHeight() / 2 };
-		rotate((base.y - GetMouseY()) / 5.0f, (base.x - GetMouseX()) / 5.0f);
-		SetCursorPos(base.x, base.y);
+		int x = -OUTPUT_WIDTH / 2;
+		int y = -OUTPUT_HEIGHT / 2;
+
+		while (!file.eof())
+		{
+			if (file.bad())
+			{
+				file.close();
+				return;
+			}
+
+			char s[OUTPUT_WIDTH];
+			file.ignore();
+			file.getline(s, OUTPUT_WIDTH);
+
+			for (int i = 0; i < OUTPUT_WIDTH; i++, x++)
+			{
+				int p = y * OUTPUT_WIDTH + x;
+				switch (s[i])
+				{
+				case '-':
+					tWorld[p].texture = textures[ROAD - 1];
+					tWorld[p].textureIndex = ROAD - 1;
+					break;
+
+				case '|':
+					tWorld[p].texture = textures[ROAD - 1];
+					tWorld[p].textureAngle = -90.0f;
+					tWorld[p].textureIndex = ROAD - 1;
+					break;
+
+				case '@':
+					tWorld[p].texture = textures[ROAD_TILE - 1];
+					tWorld[p].textureIndex = ROAD_TILE - 1;
+					break;
+
+				case '=':
+					tWorld[p].texture = textures[ROAD_CROSSWALK - 1];
+					tWorld[p].textureIndex = ROAD_CROSSWALK - 1;
+					break;
+
+				case '"':
+					tWorld[p].texture = textures[ROAD_CROSSWALK - 1];
+					tWorld[p].textureAngle = -90.0f;
+					tWorld[p].textureIndex = ROAD_CROSSWALK - 1;
+					break;
+
+				case '>':
+					tWorld[p].texture = textures[RIGHT_ROAD - 1];
+					tWorld[p].textureIndex = RIGHT_ROAD - 1;
+					break;
+
+				case '<':
+					tWorld[p].texture = textures[RIGHT_ROAD - 1];
+					tWorld[p].textureAngle = -180.0f;
+					tWorld[p].textureIndex = RIGHT_ROAD - 1;
+					break;
+
+				case '+':
+					tWorld[p].texture = textures[INTERSECTION - 1];
+					tWorld[p].textureIndex = INTERSECTION - 1;
+					break;
+				
+				case '#':
+					tWorld[p].texture = textures[GRASS - 1];
+					tWorld[p].textureIndex = GRASS - 1;
+					break;
+
+				case '\0':
+					break;
+
+				default:
+					if (std::isdigit(s[i]))
+					{
+						tWorld[p].height = (int)s[i] - 48;
+						tWorld[p].isEmpty = false;
+					}
+					else
+					{
+						file.close();
+						return;
+					}
+				}
+			}
+		
+			x = -OUTPUT_WIDTH / 2;
+			if (++y == OUTPUT_HEIGHT / 2)
+			{
+				file.close();
+				return;
+			}
+		}
+		
+		return;
+	}
+
+	GLuint LoadTexture(const char* filename)
+	{
+		int nWidth, nHeight, nChannels;
+
+		stbi_set_flip_vertically_on_load(1);
+		unsigned char* data = stbi_load(filename, &nWidth, &nHeight, &nChannels, 0);
+
+		if (!data)
+			throw std::exception(stbi_failure_reason());
+
+		GLuint nTextureId = 0;
+		GLenum format = 0;
+
+		switch (nChannels)
+		{
+		case 1: format = GL_RED; break;
+		case 3: format = GL_RGB; break;
+		case 4: format = GL_RGBA; break;
+		default: throw std::exception("Unsupported color format.");
+		}
+
+		glGenTextures(1, &nTextureId);
+		glBindTexture(GL_TEXTURE_2D, nTextureId);
+
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+		glTexImage2D(
+			GL_TEXTURE_2D,
+			0,
+			format,
+			nWidth, 
+			nHeight,
+			0,
+			format,
+			GL_UNSIGNED_BYTE,
+			data
+		);
+
+		glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+
+		glBindTexture(GL_TEXTURE_2D, 0);
+		
+		stbi_image_free(data);
+
+		return nTextureId;
+	}
+
+	void DrawTile(float x, float y, GLuint texture, float angle)
+	{
+		glTranslatef(x, y, 0.0f);
+		glRotatef(angle, 0.0f, 0.0f, 1.0f);	
+
+		glEnable(GL_TEXTURE_2D);
+
+		glPushMatrix();
+			glColor3f(1.0f, 1.0f, 1.0f);
+
+			glBindTexture(GL_TEXTURE_2D, texture);
+
+			glBegin(GL_QUADS);
+				glTexCoord3f(-1.0f, 1.0f, 0.0f);  glVertex3f(-1, 1, 0);
+				glTexCoord3f(1.0f, 1.0f, 0.0f);  glVertex3f(1, 1, 0);
+				glTexCoord3f(1.0f, -1.0f, 0.0f);  glVertex3f(1, -1, 0);
+				glTexCoord3f(-1.0f, -1.0f, 0.0f);  glVertex3f(-1, -1, 0);
+			glEnd();
+
+			glBindTexture(GL_TEXTURE_2D, 0);
+
+		glPopMatrix();
+
+		glRotatef(-angle, 0.0f, 0.0f, 1.0f);
+		glTranslatef(-x, -y, 0.0f);
 	}
 
 	void DrawCube(float x, float y, float z)
@@ -167,103 +386,82 @@ private:
 
 		glColor3f(0.5f, 0.5f, 0.5f);
 
-		glVertex3f(0, 0, 0);
-		glVertex3f(0, 0, 1);
-		glVertex3f(1, 0, 0);
+		glVertex3f(0.0f, 0.0f, 0.0f);
+		glVertex3f(0.0f, 0.0f, 1.0f);
+		glVertex3f(1.0f, 0.0f, 0.0f);
 
-		glVertex3f(0, 0, 1);
-		glVertex3f(1, 0, 1);
-		glVertex3f(1, 0, 0);
+		glVertex3f(0.0f, 0.0f, 1.0f);
+		glVertex3f(1.0f, 0.0f, 1.0f);
+		glVertex3f(1.0f, 0.0f, 0.0f);
 
 		glColor3f(0.1f, 0.5f, 0.5f);
 
-		glVertex3f(0, 1, 0);
-		glVertex3f(0, 1, 1);
-		glVertex3f(1, 1, 0);
+		glVertex3f(0.0f, 1.0f, 0.0f);
+		glVertex3f(0.0f, 1.0f, 1.0f);
+		glVertex3f(1.0f, 1.0f, 0.0f);
 
-		glVertex3f(0, 1, 1);
-		glVertex3f(1, 1, 1);
-		glVertex3f(1, 1, 0);
+		glVertex3f(0.0f, 1.0f, 1.0f);
+		glVertex3f(1.0f, 1.0f, 1.0f);
+		glVertex3f(1.0f, 1.0f, 0.0f);
 
 		glColor3f(0.1f, 0.2f, 0.5f);
 
-		glVertex3f(0, 0, 0);
-		glVertex3f(0, 0, 1);
-		glVertex3f(0, 1, 0);
+		glVertex3f(0.0f, 0.0f, 0.0f);
+		glVertex3f(0.0f, 0.0f, 1.0f);
+		glVertex3f(0.0f, 1.0f, 0.0f);
 
-		glVertex3f(0, 1, 0);
-		glVertex3f(0, 1, 1);
-		glVertex3f(0, 0, 1);
+		glVertex3f(0.0f, 1.0f, 0.0f);
+		glVertex3f(0.0f, 1.0f, 1.0f);
+		glVertex3f(0.0f, 0.0f, 1.0f);
 
 		glColor3f(0.3f, 0.2f, 0.1f);
 
-		glVertex3f(1, 0, 0);
-		glVertex3f(1, 0, 1);
-		glVertex3f(1, 1, 0);
+		glVertex3f(1.0f, 0.0f, 0.0f);
+		glVertex3f(1.0f, 0.0f, 1.0f);
+		glVertex3f(1.0f, 1.0f, 0.0f);
 
-		glVertex3f(1, 1, 0);
-		glVertex3f(1, 1, 1);
-		glVertex3f(1, 0, 1);
+		glVertex3f(1.0f, 1.0f, 0.0f);
+		glVertex3f(1.0f, 1.0f, 1.0f);
+		glVertex3f(1.0f, 0.0f, 1.0f);
 
 		glColor3f(0.5f, 0.7f, 0.6f);
 
-		glVertex3f(0, 0, 1);
-		glVertex3f(0, 1, 1);
-		glVertex3f(1, 0, 1);
+		glVertex3f(0.0f, 0.0f, 1.0f);
+		glVertex3f(0.0f, 1.0f, 1.0f);
+		glVertex3f(1.0f, 0.0f, 1.0f);
 
-		glVertex3f(1, 0, 1);
-		glVertex3f(1, 1, 1);
-		glVertex3f(0, 1, 1);
-
-		glColor3f(0.75f, 0.1f, 0.3f);
-
-		glVertex3f(0, 0, 0);
-		glVertex3f(0, 1, 0);
-		glVertex3f(1, 0, 0);
-
-		glVertex3f(1, 0, 0);
-		glVertex3f(1, 1, 0);
-		glVertex3f(0, 1, 0);
+		glVertex3f(1.0f, 0.0f, 1.0f);
+		glVertex3f(1.0f, 1.0f, 1.0f);
+		glVertex3f(0.0f, 1.0f, 1.0f);
 
 		glEnd();
 
 		glTranslatef(-x, -y, -z);
 	}
 
-	void DoPerlinNoise2D(int nOctaves, float fBias)
+	void DrawSelectedArea()
 	{
-		for (int x = 0; x < OUTPUT_WIDTH; x++)
-			for (int y = 0; y < OUTPUT_HEIGHT; y++)
-			{
-				float fNoise = 0.0f;
-				float fScale = 1.0f;
-				float fScaleAccumulator = 0.0f;
+		glTranslatef(vSelectedArea.x, vSelectedArea.y, 0.0f);
 
-				for (int o = 0; o < nOctaves; o++)
-				{
-					int nPitch = OUTPUT_WIDTH >> o;
+		glBegin(GL_LINES);
+		
+		glColor3f(1.0f, 0.0f, 0.0f);
 
-					if (nPitch != 0) {
-						int nSampleX1 = (x / nPitch) * nPitch;
-						int nSampleY1 = (y / nPitch) * nPitch;
+		glVertex3f(0.0f, 0.0f, 0.0f);
+		glVertex3f(0.0f, 1.0f, 0.0f);
 
-						int nSampleX2 = (nSampleX1 + nPitch) % OUTPUT_WIDTH;
-						int nSampleY2 = (nSampleY1 + nPitch) % OUTPUT_WIDTH;
+		glVertex3f(0.0f, 1.0f, 0.0f);
+		glVertex3f(1.0f, 1.0f, 0.0f);
 
-						float fBlendX = (float)(x - nSampleX1) / (float)nPitch;
-						float fBlendY = (float)(y - nSampleY1) / (float)nPitch;
+		glVertex3f(1.0f, 1.0f, 0.0f);
+		glVertex3f(1.0f, 0.0f, 0.0f);
 
-						float fSampleT = (1.0f - fBlendX) * fPerlinSeed2D[nSampleX1][nSampleY1] + fBlendX * fPerlinSeed2D[nSampleX2][nSampleY1];
-						float fSampleB = (1.0f - fBlendX) * fPerlinSeed2D[nSampleX1][nSampleY2] + fBlendX * fPerlinSeed2D[nSampleX2][nSampleY2];
+		glVertex3f(1.0f, 0.0f, 0.0f);
+		glVertex3f(0.0f, 0.0f, 0.0f);
 
-						fNoise += (fBlendY * (fSampleB - fSampleT) + fSampleT) * fScale;
-						fScaleAccumulator += fScale;
-						fScale /= fBias;
-					}
-				}
+		glEnd();
 
-				bWorld[x][y][int(fNoise / fScaleAccumulator * 10) / 2] = true;
-			}
+		glTranslatef(-vSelectedArea.x, -vSelectedArea.y, 0.0f);
 	}
 };
 
