@@ -35,6 +35,11 @@ namespace def
 	{
 		int x;
 		int y;
+
+		friend bool operator<(const vi2d& lhs, const vi2d& rhs)
+		{
+			return lhs.x < rhs.x && lhs.y < rhs.y;
+		}
 	};
 
 	const double PI = 2.0 * acos(0.0);
@@ -60,6 +65,10 @@ namespace def
 	public:
 		virtual bool Start() = 0;
 		virtual bool Update() = 0;
+		virtual void Destroy()
+		{
+			return;
+		}
 
 	private:
 		static LRESULT CALLBACK WinProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -226,6 +235,7 @@ namespace def
 
 					POINT cursor;
 					GetCursorPos(&cursor);
+					ScreenToClient(hWnd, &cursor);
 
 					fMouseX = cursor.x;
 					fMouseY = cursor.y;
@@ -247,6 +257,9 @@ namespace def
 					Sleep(1);
 				}
 			}
+
+			Destroy();
+			DisableOpenGL(hWnd, hDC, hRC);
 		}
 
 	private:
