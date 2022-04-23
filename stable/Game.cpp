@@ -66,9 +66,9 @@ public:
 	Example(lua_State* state, int world_width, int world_height)
 	{
 		L = state;
-		
-		nWorldWidth = (world_width < 30) ? 30 : world_width;
-		nWorldHeight = (world_height < 15) ? 15 : world_height;
+
+		nWorldWidth = world_width;
+		nWorldHeight = world_height;
 	}
 
 protected:
@@ -509,6 +509,9 @@ int main()
 		lua_getglobal(L, "WorldHeight");
 		int nWorldHeight = lua_tonumber(L, -1);
 
+		nWorldWidth = (nWorldWidth < 30) ? 30 : nWorldWidth;
+		nWorldHeight = (nWorldHeight < 15) ? 15 : nWorldHeight;
+
 		Example demo(L, nWorldWidth, nWorldHeight);
 
 		lua_getglobal(L, "ScreenWidth");
@@ -520,8 +523,8 @@ int main()
 		if (nScreenWidth < 800)
 			nScreenWidth = 800;
 
-		if (nScreenWidth < 600)
-			nScreenWidth = 600;
+		if (nScreenHeight < 600)
+			nScreenHeight = 600;
 
 		if (!demo.Run(nScreenWidth, nScreenHeight, L"3D Game"))
 			return 1;
