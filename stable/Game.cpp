@@ -152,25 +152,25 @@ protected:
 		}
 
 		if (GetKey(L'Z').bHeld)
-			vCamera.scale += 0.1f;
+			vCamera.scale += 0.01f;
 
 		if (GetKey(L'X').bHeld)
-			vCamera.scale -= 0.1f;
+			vCamera.scale -= 0.01f;
 
 		if (vCamera.scale < 0.1f)
 			vCamera.scale = 0.1f;
 
 		if (GetKey(VK_LEFT).bHeld)
-			vCamera.pos.x -= 0.001f * nWorldWidth;
+			vCamera.pos.x -= 0.01f * nWorldWidth;
 
 		if (GetKey(VK_RIGHT).bHeld)
-			vCamera.pos.x += 0.001f * nWorldWidth;
+			vCamera.pos.x += 0.01f * nWorldWidth;
 
 		if (GetKey(VK_DOWN).bHeld)
-			vCamera.pos.y -= 0.001f * nWorldHeight;
+			vCamera.pos.y -= 0.01f * nWorldHeight;
 
 		if (GetKey(VK_UP).bHeld)
-			vCamera.pos.y += 0.001f * nWorldHeight;
+			vCamera.pos.y += 0.01f * nWorldHeight;
 
 		if (GetKey(L'A').bPressed)
 			vSelectedArea.x -= 1;
@@ -246,7 +246,7 @@ private:
 			{
 				lua_pushnumber(L, k);
 				lua_gettable(L, -2);
-				char* pMapLine = (char*)lua_tostring(L, -1);
+				const char* pMapLine = lua_tostring(L, -1);
 				lua_pop(L, 1);
 
 				for (int i = 0; i < nWorldWidth; i++, x++)
