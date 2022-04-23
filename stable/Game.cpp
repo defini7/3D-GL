@@ -1,3 +1,5 @@
+#define _CRT_SECURE_NO_WARNINGS
+
 #include "Poison.h"
 
 #include <map>
@@ -6,16 +8,26 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
-#define BLOCK_SIZE 1.0f
-#define PLAYER_HEIGHT 4.0f
+extern "C"
+{
+#include "lua542/include/lua.h"
+#include "lua542/include/lauxlib.h"
+#include "lua542/include/lualib.h"
+}
 
-#define OUTPUT_WIDTH 30
-#define OUTPUT_HEIGHT 15
+#ifdef _WIN32
+#pragma comment(lib, "lua542/liblua54.a")
+#endif
 
 struct sCamera
 {
 	def::vf3d pos;
 	float scale;
+};
+
+struct sPlayer
+{
+	def::vf2d pos;
 };
 
 struct sTile
@@ -44,25 +56,40 @@ enum TILES
 	ROAD,
 	ROAD_CROSSWALK,
 	INTERSECTION,
-	RIGHT_ROAD
+	RIGHT_ROAD,
+	CAR // keep it always at the bottom
 };
 
 class Example : public def::Poison
 {
+public:
+	Example(lua_State* state, int world_width, int world_height)
+	{
+		L = state;
+		
+		nWorldWidth = (world_width < 30) ? 30 : world_width;
+		nWorldHeight = (world_height < 15) ? 15 : world_height;
+	}
+
 protected:
 	bool Start() override
 	{
-		for (int i = -OUTPUT_WIDTH * OUTPUT_HEIGHT; i < OUTPUT_WIDTH * OUTPUT_HEIGHT; i++)
-			tWorld[i] = { true, 0, -1, GRASS, 0.0f };
+		for (int i = -nWorldWidth * nWorldHeight; i < nWorldWidth * nWorldHeight; i++)
+			tWorld[i] = { true, 0, 0, GRASS, 0.0f };
 
-		textures[GRASS] = LoadTexture("sprites/grass.jpg");
+		textures[GRASS] = LoadTexture("sprites/grass.png");
 		textures[ROAD_TILE] = LoadTexture("sprites/road_tile.jpg");
 		textures[ROAD] = LoadTexture("sprites/horizontal.jpg");
 		textures[ROAD_CROSSWALK] = LoadTexture("sprites/horizontal_crosswalk.jpg");
 		textures[INTERSECTION] = LoadTexture("sprites/intersection.jpg");
 		textures[RIGHT_ROAD] = LoadTexture("sprites/right.jpg");
+		textures[CAR] = LoadTexture("sprites/car_top1.png", true);
 
-		LoadLevel("1.lvl");
+		// LUA STUFF
+
+		LoadLevel();
+
+		// END LUA STUFF
 
 		return true;
 	}
@@ -74,7 +101,7 @@ protected:
 
 		if (GetKey(VK_LBUTTON).bPressed)
 		{
-			int p = vSelectedArea.y * OUTPUT_WIDTH + vSelectedArea.x;
+			int p = vSelectedArea.y * nWorldWidth + vSelectedArea.x;
 
 			tWorld[p].isEmpty = false;
 			tWorld[p].height++;
@@ -85,7 +112,7 @@ protected:
 
 		if (GetKey(VK_RBUTTON).bPressed)
 		{
-			int p = vSelectedArea.y * OUTPUT_WIDTH + vSelectedArea.x;
+			int p = vSelectedArea.y * nWorldWidth + vSelectedArea.x;
 
 			tWorld[p].height--;
 
@@ -98,35 +125,29 @@ protected:
 
 		if (GetKey(L'E').bPressed)
 		{
-			int p = vSelectedArea.y * OUTPUT_WIDTH + vSelectedArea.x;
+			int p = vSelectedArea.y * nWorldWidth + vSelectedArea.x;
 
-			if (tWorld[p].textureIndex < 4)
-			{
-				tWorld[p].textureIndex++;
-				tWorld[p].texture = textures[tWorld[p].textureIndex];
-			}
+			if (tWorld[p].textureIndex < 5)
+				tWorld[p].texture = textures[++tWorld[p].textureIndex];
 		}
 
 		if (GetKey(L'Q').bPressed)
 		{
-			int p = vSelectedArea.y * OUTPUT_WIDTH + vSelectedArea.x;
+			int p = vSelectedArea.y * nWorldWidth + vSelectedArea.x;
 
-			if (tWorld[p].textureIndex > -1)
-			{
-				tWorld[p].textureIndex--;
-				tWorld[p].texture = textures[tWorld[p].textureIndex];
-			}
+			if (tWorld[p].textureIndex > 0)
+				tWorld[p].texture = textures[--tWorld[p].textureIndex];
 		}
 
 		if (GetKey(L'O').bPressed)
 		{
-			int p = vSelectedArea.y * OUTPUT_WIDTH + vSelectedArea.x;
+			int p = vSelectedArea.y * nWorldWidth + vSelectedArea.x;
 			tWorld[p].textureAngle -= 90.0f;
 		}
 
 		if (GetKey(L'P').bPressed)
 		{
-			int p = vSelectedArea.y * OUTPUT_WIDTH + vSelectedArea.x;
+			int p = vSelectedArea.y * nWorldWidth + vSelectedArea.x;
 			tWorld[p].textureAngle += 90.0f;
 		}
 
@@ -140,16 +161,16 @@ protected:
 			vCamera.scale = 0.1f;
 
 		if (GetKey(VK_LEFT).bHeld)
-			vCamera.pos.x -= 0.001f * OUTPUT_WIDTH;
+			vCamera.pos.x -= 0.001f * nWorldWidth;
 
 		if (GetKey(VK_RIGHT).bHeld)
-			vCamera.pos.x += 0.001f * OUTPUT_WIDTH;
+			vCamera.pos.x += 0.001f * nWorldWidth;
 
 		if (GetKey(VK_DOWN).bHeld)
-			vCamera.pos.y -= 0.001f * OUTPUT_HEIGHT;
+			vCamera.pos.y -= 0.001f * nWorldHeight;
 
 		if (GetKey(VK_UP).bHeld)
-			vCamera.pos.y += 0.001f * OUTPUT_HEIGHT;
+			vCamera.pos.y += 0.001f * nWorldHeight;
 
 		if (GetKey(L'A').bPressed)
 			vSelectedArea.x -= 1;
@@ -165,17 +186,25 @@ protected:
 
 		DrawSelectedArea();
 
-		for (int i = -OUTPUT_WIDTH / 2; i < OUTPUT_WIDTH / 2; i++)
-			for (int j = -OUTPUT_HEIGHT / 2; j < OUTPUT_HEIGHT / 2; j++)
+		for (int i = -nWorldWidth / 2; i < nWorldWidth / 2; i++)
+			for (int j = -nWorldHeight / 2; j < nWorldHeight / 2; j++)
 			{
-				if (!tWorld[j * OUTPUT_WIDTH + i].isEmpty)
+				int p = j * nWorldWidth + i;
+
+				if (!tWorld[p].isEmpty)
 				{
-					for (int k = 0; k < tWorld[j * OUTPUT_WIDTH + i].height; k++)
+					for (int k = 0; k < tWorld[p].height; k++)
 						DrawCube(i, j, k);
 				}
-
-				DrawTile(i, j, textures[tWorld[j * OUTPUT_WIDTH + i].texture], tWorld[j * OUTPUT_WIDTH + i].textureAngle);
+				
+				DrawTile(i, j, textures[tWorld[p].texture - 1], tWorld[p].textureAngle);
 			}
+
+		glPushMatrix();
+			glScalef(1.0f, 0.5f, 1.0f);
+			glTranslatef(0.0f, 0.5f, 0.0f);
+			DrawTile(player.pos.x, player.pos.y, textures[CAR], 0.0f);
+		glPopMatrix();
 
 		return true;
 	}
@@ -186,130 +215,123 @@ protected:
 	}
 
 private:
+	lua_State* L = nullptr;
+
 	std::map<int, sTile> tWorld;
+
+	GLuint textures[7];
 
 	sCamera vCamera = {
 		{ 0.0f, 0.0f, 10.0f },
 		1.0f
 	};
 
+	sPlayer player = { 0.0f, 0.0f };
+
 	def::vi2d vSelectedArea = { 0, 0 };
 
-	GLuint textures[6];
+	int nWorldWidth;
+	int nWorldHeight;
 
-	void LoadLevel(const char* filename)
+	bool LoadLevel()
 	{
-		std::ifstream file;
-		file.open(filename, std::ios::in);
+		lua_getglobal(L, "WorldMap");
 
-		if (!file.is_open())
+		if (lua_istable(L, -1))
 		{
-			file.close();
-			return;
-		}
+			int x = -nWorldWidth / 2;
+			int y = -nWorldHeight / 2;
 
-		int x = -OUTPUT_WIDTH / 2;
-		int y = -OUTPUT_HEIGHT / 2;
-
-		while (!file.eof())
-		{
-			if (file.bad())
+			for (int k = nWorldHeight / 2; k > -nWorldHeight / 2; k--)
 			{
-				file.close();
-				return;
-			}
+				lua_pushnumber(L, k);
+				lua_gettable(L, -2);
+				char* pMapLine = (char*)lua_tostring(L, -1);
+				lua_pop(L, 1);
 
-			char s[OUTPUT_WIDTH];
-			file.ignore();
-			file.getline(s, OUTPUT_WIDTH);
-
-			for (int i = 0; i < OUTPUT_WIDTH; i++, x++)
-			{
-				int p = y * OUTPUT_WIDTH + x;
-				switch (s[i])
+				for (int i = 0; i < nWorldWidth; i++, x++)
 				{
-				case '-':
-					tWorld[p].texture = textures[ROAD - 1];
-					tWorld[p].textureIndex = ROAD - 1;
-					break;
-
-				case '|':
-					tWorld[p].texture = textures[ROAD - 1];
-					tWorld[p].textureAngle = -90.0f;
-					tWorld[p].textureIndex = ROAD - 1;
-					break;
-
-				case '@':
-					tWorld[p].texture = textures[ROAD_TILE - 1];
-					tWorld[p].textureIndex = ROAD_TILE - 1;
-					break;
-
-				case '=':
-					tWorld[p].texture = textures[ROAD_CROSSWALK - 1];
-					tWorld[p].textureIndex = ROAD_CROSSWALK - 1;
-					break;
-
-				case '"':
-					tWorld[p].texture = textures[ROAD_CROSSWALK - 1];
-					tWorld[p].textureAngle = -90.0f;
-					tWorld[p].textureIndex = ROAD_CROSSWALK - 1;
-					break;
-
-				case '>':
-					tWorld[p].texture = textures[RIGHT_ROAD - 1];
-					tWorld[p].textureIndex = RIGHT_ROAD - 1;
-					break;
-
-				case '<':
-					tWorld[p].texture = textures[RIGHT_ROAD - 1];
-					tWorld[p].textureAngle = -180.0f;
-					tWorld[p].textureIndex = RIGHT_ROAD - 1;
-					break;
-
-				case '+':
-					tWorld[p].texture = textures[INTERSECTION - 1];
-					tWorld[p].textureIndex = INTERSECTION - 1;
-					break;
-				
-				case '#':
-					tWorld[p].texture = textures[GRASS - 1];
-					tWorld[p].textureIndex = GRASS - 1;
-					break;
-
-				case '\0':
-					break;
-
-				default:
-					if (std::isdigit(s[i]))
+					int p = y * nWorldWidth + x;
+					switch (pMapLine[i])
 					{
-						tWorld[p].height = (int)s[i] - 48;
-						tWorld[p].isEmpty = false;
+					case '-':
+						tWorld[p].texture = textures[ROAD];
+						tWorld[p].textureIndex = ROAD;
+						break;
+
+					case '|':
+						tWorld[p].texture = textures[ROAD];
+						tWorld[p].textureAngle = -90.0f;
+						tWorld[p].textureIndex = ROAD;
+						break;
+
+					case '@':
+						tWorld[p].texture = textures[ROAD_TILE];
+						tWorld[p].textureIndex = ROAD_TILE;
+						break;
+
+					case '=':
+						tWorld[p].texture = textures[ROAD_CROSSWALK];
+						tWorld[p].textureIndex = ROAD_CROSSWALK;
+						break;
+
+					case '"':
+						tWorld[p].texture = textures[ROAD_CROSSWALK];
+						tWorld[p].textureAngle = -90.0f;
+						tWorld[p].textureIndex = ROAD_CROSSWALK;
+						break;
+
+					case '>':
+						tWorld[p].texture = textures[RIGHT_ROAD];
+						tWorld[p].textureIndex = RIGHT_ROAD;
+						break;
+
+					case '<':
+						tWorld[p].texture = textures[RIGHT_ROAD];
+						tWorld[p].textureAngle = -180.0f;
+						tWorld[p].textureIndex = RIGHT_ROAD;
+						break;
+
+					case '+':
+						tWorld[p].texture = textures[INTERSECTION];
+						tWorld[p].textureIndex = INTERSECTION;
+						break;
+
+					case '#':
+						tWorld[p].texture = textures[GRASS];
+						tWorld[p].textureIndex = GRASS;
+						break;
+
+					case '\0':
+						break;
+
+					default:
+						if (std::isdigit(pMapLine[i]))
+						{
+							tWorld[p].height = (int)pMapLine[i] - 48;
+							tWorld[p].isEmpty = false;
+						}
+						else
+							return true;
 					}
-					else
-					{
-						file.close();
-						return;
-					}
+
 				}
-			}
-		
-			x = -OUTPUT_WIDTH / 2;
-			if (++y == OUTPUT_HEIGHT / 2)
-			{
-				file.close();
-				return;
+
+				x = -nWorldWidth / 2;
+				if (++y == nWorldHeight / 2)
+					return true;
 			}
 		}
 		
-		return;
+		return true;
 	}
 
-	GLuint LoadTexture(const char* filename)
+	GLuint LoadTexture(const char* sFilename, bool bClamp = false)
 	{
 		int nWidth, nHeight, nChannels;
 
 		stbi_set_flip_vertically_on_load(1);
-		unsigned char* data = stbi_load(filename, &nWidth, &nHeight, &nChannels, 0);
+		unsigned char* data = stbi_load(sFilename, &nWidth, &nHeight, &nChannels, 0);
 
 		if (!data)
 			throw std::exception(stbi_failure_reason());
@@ -344,6 +366,12 @@ private:
 		glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 		glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 
+		if (bClamp)
+		{
+			glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+			glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+		}
+
 		glBindTexture(GL_TEXTURE_2D, 0);
 		
 		stbi_image_free(data);
@@ -357,9 +385,11 @@ private:
 		glRotatef(angle, 0.0f, 0.0f, 1.0f);	
 
 		glEnable(GL_TEXTURE_2D);
+		glEnable(GL_BLEND);
 
 		glPushMatrix();
 			glColor3f(1.0f, 1.0f, 1.0f);
+			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 			glBindTexture(GL_TEXTURE_2D, texture);
 
@@ -467,10 +497,41 @@ private:
 
 int main()
 {
-	Example demo;
+	lua_State* L = luaL_newstate();
 
-	if (!demo.Run(1024, 768, L"Hello, World!"))
+	int rcode = luaL_dofile(L, "config.lua");
+
+	if (rcode == LUA_OK)
+	{
+		lua_getglobal(L, "WorldWidth");
+		int nWorldWidth = lua_tonumber(L, -1);
+
+		lua_getglobal(L, "WorldHeight");
+		int nWorldHeight = lua_tonumber(L, -1);
+
+		Example demo(L, nWorldWidth, nWorldHeight);
+
+		lua_getglobal(L, "ScreenWidth");
+		int nScreenWidth = lua_tonumber(L, -1);
+
+		lua_getglobal(L, "ScreenHeight");
+		int nScreenHeight = lua_tonumber(L, -1);
+
+		if (nScreenWidth < 800)
+			nScreenWidth = 800;
+
+		if (nScreenWidth < 600)
+			nScreenWidth = 600;
+
+		if (!demo.Run(nScreenWidth, nScreenHeight, L"3D Game"))
+			return 1;
+	}
+	else
+	{
+		const char* msg = lua_tostring(L, -1);
+		std::cerr << msg << "\n";
 		return 1;
+	}
 
 	return 0;
 }
