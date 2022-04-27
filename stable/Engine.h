@@ -2,7 +2,7 @@
 
 #include <Windows.h>
 #include <iostream>
-#include <GL/gl.h>
+#include <gl/GL.h>
 
 #pragma comment(lib, "opengl32.lib")
 
