@@ -5,9 +5,11 @@
 #include <map>
 #include <fstream>
 
+// I am using stb_image as image loader
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
+// Include Lua 5.4.2 library
 extern "C"
 {
 #include "lua542/include/lua.h"
@@ -15,21 +17,34 @@ extern "C"
 #include "lua542/include/lualib.h"
 }
 
+// It's only for Visual Studio
 #ifdef _WIN32
 #pragma comment(lib, "lua542/liblua54.a")
 #endif
 
+/*
+* Camera only has a position
+* and could not be rotated
+*/
 struct sCamera
 {
 	def::vf3d pos;
-	float scale;
 };
 
+/*
+* Here could be multiple players.
+* Every player has a position and could be rotated.
+*/
 struct sPlayer
 {
 	def::vf2d pos;
+	float angle;
 };
 
+/* 
+* Every platform is a sTile.
+* Each has a texture and could be rotated.
+*/
 struct sTile
 {
 	bool isEmpty;
@@ -40,15 +55,7 @@ struct sTile
 	float textureAngle; // in degrees
 };
 
-struct sImage
-{
-	unsigned char* data;
-
-	int width;
-	int height;
-	int channels;
-};
-
+// Every tile in a game
 enum TILES
 {
 	GRASS,
@@ -57,6 +64,8 @@ enum TILES
 	ROAD_CROSSWALK,
 	INTERSECTION,
 	RIGHT_ROAD,
+	BUILDING1_FLOOR,
+	BUILDING1_ROOF,
 	CAR // keep it always at the bottom
 };
 
@@ -74,31 +83,61 @@ public:
 protected:
 	bool Start() override
 	{
+		auto get_from_table = [&](const char* key)
+		{
+			lua_pushstring(L, key);
+			lua_gettable(L, -2);
+			const char* value = lua_tostring(L, -1);
+			lua_pop(L, 1);
+			return value;
+		};
+
+		// Initialization of map
 		for (int i = -nWorldWidth * nWorldHeight; i < nWorldWidth * nWorldHeight; i++)
 			tWorld[i] = { true, 0, 0, GRASS, 0.0f };
 
-		textures[GRASS] = LoadTexture("sprites/grass.png");
-		textures[ROAD_TILE] = LoadTexture("sprites/road_tile.jpg");
-		textures[ROAD] = LoadTexture("sprites/horizontal.jpg");
-		textures[ROAD_CROSSWALK] = LoadTexture("sprites/horizontal_crosswalk.jpg");
-		textures[INTERSECTION] = LoadTexture("sprites/intersection.jpg");
-		textures[RIGHT_ROAD] = LoadTexture("sprites/right.jpg");
-		textures[CAR] = LoadTexture("sprites/car_top1.png", true);
+		player.pos.x = 0.0f;
+		player.pos.y = 0.0f;
 
-		// LUA STUFF
+		player.angle = 0.0f;
 
+		camera.pos.x = 0.0f;
+		camera.pos.y = 0.0f;
+		camera.pos.z = 10.0f;
+
+		// Loading textures
+		lua_getglobal(L, "Textures");
+
+		if (lua_istable(L, -1))
+		{
+#define t(name) get_from_table(name)
+			textures[GRASS] = LoadTexture(t("Grass"));
+			textures[ROAD_TILE] = LoadTexture(t("RoadTile"));
+			textures[ROAD] = LoadTexture(t("Road"));
+			textures[ROAD_CROSSWALK] = LoadTexture(t("RoadCrosswalk"));
+			textures[INTERSECTION] = LoadTexture(t("Intersection"));
+			textures[RIGHT_ROAD] = LoadTexture(t("RightRoad"));
+			textures[CAR] = LoadTexture(t("Car"), true);
+
+			textures[BUILDING1_FLOOR] = LoadTexture(t("Building1Floor"));
+			textures[BUILDING1_ROOF] = LoadTexture(t("Building1Roof"));
+#undef t
+		}
+
+		// Loading level
 		LoadLevel();
-
-		// END LUA STUFF
 
 		return true;
 	}
 
 	bool Update() override
 	{
-		glScalef(vCamera.scale, vCamera.scale, 1.0f);
-		glTranslatef(-vCamera.pos.x, -vCamera.pos.y, -vCamera.pos.z);
+		camera.pos.x = player.pos.x;
+		camera.pos.y = player.pos.y;
 
+		glTranslatef(-camera.pos.x, -camera.pos.y, -camera.pos.z);
+
+		// Build a building
 		if (GetKey(VK_LBUTTON).bPressed)
 		{
 			int p = vSelectedArea.y * nWorldWidth + vSelectedArea.x;
@@ -106,10 +145,11 @@ protected:
 			tWorld[p].isEmpty = false;
 			tWorld[p].height++;
 
-			if (tWorld[p].height > 4)
-				tWorld[p].height = 4;
+			if (tWorld[p].height > 20)
+				tWorld[p].height = 20;
 		}
 
+		// Break a building
 		if (GetKey(VK_RBUTTON).bPressed)
 		{
 			int p = vSelectedArea.y * nWorldWidth + vSelectedArea.x;
@@ -123,6 +163,7 @@ protected:
 			}
 		}
 
+		// Change tile in selected area
 		if (GetKey(L'E').bPressed)
 		{
 			int p = vSelectedArea.y * nWorldWidth + vSelectedArea.x;
@@ -139,6 +180,7 @@ protected:
 				tWorld[p].texture = textures[--tWorld[p].textureIndex];
 		}
 
+		// Rotate tile in selected area
 		if (GetKey(L'O').bPressed)
 		{
 			int p = vSelectedArea.y * nWorldWidth + vSelectedArea.x;
@@ -151,27 +193,32 @@ protected:
 			tWorld[p].textureAngle += 90.0f;
 		}
 
+		// Zoom world
 		if (GetKey(L'Z').bHeld)
-			vCamera.scale += 0.01f;
+			camera.pos.z += 0.1f;
 
 		if (GetKey(L'X').bHeld)
-			vCamera.scale -= 0.01f;
+			camera.pos.z -= 0.1f;
 
-		if (vCamera.scale < 0.1f)
-			vCamera.scale = 0.1f;
+		if (camera.pos.z < 5.0f)
+			camera.pos.z = 5.0f;
 
+		// Move player
 		if (GetKey(VK_LEFT).bHeld)
-			vCamera.pos.x -= 0.01f * nWorldWidth;
+			player.angle -= (float)def::PI;
 
 		if (GetKey(VK_RIGHT).bHeld)
-			vCamera.pos.x += 0.01f * nWorldWidth;
-
-		if (GetKey(VK_DOWN).bHeld)
-			vCamera.pos.y -= 0.01f * nWorldHeight;
+			player.angle += (float)def::PI;
 
 		if (GetKey(VK_UP).bHeld)
-			vCamera.pos.y += 0.01f * nWorldHeight;
+		{
+			float in_rad = player.angle * (float)def::PI / 180.0f;
+			
+			player.pos.x += sinf(in_rad) * 0.1f;
+			player.pos.y += cosf(in_rad) * 0.1f;
+		}
 
+		// Move selected area...
 		if (GetKey(L'A').bPressed)
 			vSelectedArea.x -= 1;
 
@@ -184,26 +231,34 @@ protected:
 		if (GetKey(L'W').bPressed)
 			vSelectedArea.y += 1;
 
+		// ... and draw it
 		DrawSelectedArea();
 
+		// Draw the whole world
 		for (int i = -nWorldWidth / 2; i < nWorldWidth / 2; i++)
 			for (int j = -nWorldHeight / 2; j < nWorldHeight / 2; j++)
 			{
 				int p = j * nWorldWidth + i;
 
-				if (!tWorld[p].isEmpty)
+				if (!tWorld[p].isEmpty && tWorld[p].height > 0)
 				{
 					for (int k = 0; k < tWorld[p].height; k++)
-						DrawCube(i, j, k);
+						DrawBuildingFloor(i, j, (float)k, textures[BUILDING1_FLOOR]);
+					
+					glPushMatrix();
+					DrawTile(i, j, (float)tWorld[p].height + 1.0f - 0.99f, textures[BUILDING1_ROOF], tWorld[p].textureAngle, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f});
+					glPopMatrix();
 				}
 				
-				DrawTile(i, j, textures[tWorld[p].texture - 1], tWorld[p].textureAngle);
+				glPushMatrix();
+				DrawTile(i, j, 0.0f, textures[tWorld[p].texture - 1], tWorld[p].textureAngle, { -1.0f, 1.0f, 0.0f }, { 1.0f, 1.0f, 0.0f }, { 1.0f, -1.0f, 0.0f }, { -1.0f, -1.0f, 0.0f });
+				glPopMatrix();
 			}
 
+		// Draw player
 		glPushMatrix();
-			glScalef(1.0f, 0.5f, 1.0f);
-			glTranslatef(0.0f, 0.5f, 0.0f);
-			DrawTile(player.pos.x, player.pos.y, textures[CAR], 0.0f);
+			glTranslatef(-0.5f, -0.5f, 0.0f);
+			DrawTile(player.pos.x, player.pos.y, 0.01f, textures[CAR], -player.angle + 90.0f, { -0.9f, 0.5f, 0.0f }, { 0.9f, 0.5f, 0.0f }, { 0.9f, -0.5f, 0.0f }, { -0.9f, -0.5f, 0.0f });
 		glPopMatrix();
 
 		return true;
@@ -218,23 +273,20 @@ private:
 	lua_State* L = nullptr;
 
 	std::map<int, sTile> tWorld;
+	def::vi2d vSelectedArea;
 
-	GLuint textures[7];
+	GLuint textures[9];
 
-	sCamera vCamera = {
-		{ 0.0f, 0.0f, 10.0f },
-		1.0f
-	};
-
-	sPlayer player = { 0.0f, 0.0f };
-
-	def::vi2d vSelectedArea = { 0, 0 };
+	sCamera camera;
+	sPlayer player;
 
 	int nWorldWidth;
 	int nWorldHeight;
 
 	bool LoadLevel()
 	{
+		// Get map from config.lua and fill with that a std::map
+
 		lua_getglobal(L, "WorldMap");
 
 		if (lua_istable(L, -1))
@@ -288,7 +340,7 @@ private:
 
 					case '<':
 						tWorld[p].texture = textures[RIGHT_ROAD];
-						tWorld[p].textureAngle = -180.0f;
+						tWorld[p].textureAngle = -90.0f;
 						tWorld[p].textureIndex = RIGHT_ROAD;
 						break;
 
@@ -334,7 +386,10 @@ private:
 		unsigned char* data = stbi_load(sFilename, &nWidth, &nHeight, &nChannels, 0);
 
 		if (!data)
-			throw std::exception(stbi_failure_reason());
+		{
+			std::cerr << stbi_failure_reason() << "\n";
+			assert(false && "stbi_failure_reason");
+		}
 
 		GLuint nTextureId = 0;
 		GLenum format = 0;
@@ -344,7 +399,7 @@ private:
 		case 1: format = GL_RED; break;
 		case 3: format = GL_RGB; break;
 		case 4: format = GL_RGBA; break;
-		default: throw std::exception("Unsupported color format.");
+		default: assert(false && "Unsupported color format!");
 		}
 
 		glGenTextures(1, &nTextureId);
@@ -355,7 +410,7 @@ private:
 			GL_TEXTURE_2D,
 			0,
 			format,
-			nWidth, 
+			nWidth,
 			nHeight,
 			0,
 			format,
@@ -379,92 +434,49 @@ private:
 		return nTextureId;
 	}
 
-	void DrawTile(float x, float y, GLuint texture, float angle)
+	void DrawTile(float x, float y, float z, GLuint texture, float angle, def::vf3d top_left, def::vf3d top_right, def::vf3d bottom_right, def::vf3d bottom_left)
 	{
-		glTranslatef(x, y, 0.0f);
-		glRotatef(angle, 0.0f, 0.0f, 1.0f);	
+		glTranslatef(x, y, z);
+
+		glRotatef(angle, 0.0f, 0.0f, 1.0f);
 
 		glEnable(GL_TEXTURE_2D);
 		glEnable(GL_BLEND);
 
-		glPushMatrix();
-			glColor3f(1.0f, 1.0f, 1.0f);
-			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		glColor3f(1.0f, 1.0f, 1.0f);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-			glBindTexture(GL_TEXTURE_2D, texture);
+		glBindTexture(GL_TEXTURE_2D, texture);
+			
+		glBegin(GL_QUADS);
+			glTexCoord3f(-1.0f, 1.0f, 0.0f);  glVertex3f(top_left.x, top_left.y, top_left.z);				// default: -1,  1, 0
+			glTexCoord3f(1.0f, 1.0f, 0.0f);   glVertex3f(top_right.x, top_right.y, top_right.z);			// default:  1,  1, 0
+			glTexCoord3f(1.0f, -1.0f, 0.0f);  glVertex3f(bottom_right.x, bottom_right.y, bottom_right.z);	// default:  1, -1, 0
+			glTexCoord3f(-1.0f, -1.0f, 0.0f); glVertex3f(bottom_left.x, bottom_left.y, bottom_left.z);		// default: -1, -1, 0
+		glEnd();
 
-			glBegin(GL_QUADS);
-				glTexCoord3f(-1.0f, 1.0f, 0.0f);  glVertex3f(-1, 1, 0);
-				glTexCoord3f(1.0f, 1.0f, 0.0f);  glVertex3f(1, 1, 0);
-				glTexCoord3f(1.0f, -1.0f, 0.0f);  glVertex3f(1, -1, 0);
-				glTexCoord3f(-1.0f, -1.0f, 0.0f);  glVertex3f(-1, -1, 0);
-			glEnd();
-
-			glBindTexture(GL_TEXTURE_2D, 0);
-
-		glPopMatrix();
-
-		glRotatef(-angle, 0.0f, 0.0f, 1.0f);
-		glTranslatef(-x, -y, 0.0f);
+		glBindTexture(GL_TEXTURE_2D, 0);
 	}
 
-	void DrawCube(float x, float y, float z)
+	void DrawBuildingFloor(float x, float y, float z, GLuint texture)
 	{
 		glTranslatef(x, y, z);
 
-		glBegin(GL_TRIANGLES);
+		DrawTile(0.0f, 0.0f, 0.0f, texture, 0.0f,
+			{ 0.0f, 0.0f, 1.0f }, { 1.0f, 0.0f, 1.0f }, { 1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }
+		);
 
-		glColor3f(0.5f, 0.5f, 0.5f);
+		DrawTile(0.0f, 0.0f, 0.0f, texture, 0.0f,
+			{ 0.0f, 1.0f, 1.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }
+		);
 
-		glVertex3f(0.0f, 0.0f, 0.0f);
-		glVertex3f(0.0f, 0.0f, 1.0f);
-		glVertex3f(1.0f, 0.0f, 0.0f);
+		DrawTile(0.0f, 0.0f, 0.0f, texture, 0.0f,
+			{ 1.0f, 0.0f, 1.0f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }
+		);
 
-		glVertex3f(0.0f, 0.0f, 1.0f);
-		glVertex3f(1.0f, 0.0f, 1.0f);
-		glVertex3f(1.0f, 0.0f, 0.0f);
-
-		glColor3f(0.1f, 0.5f, 0.5f);
-
-		glVertex3f(0.0f, 1.0f, 0.0f);
-		glVertex3f(0.0f, 1.0f, 1.0f);
-		glVertex3f(1.0f, 1.0f, 0.0f);
-
-		glVertex3f(0.0f, 1.0f, 1.0f);
-		glVertex3f(1.0f, 1.0f, 1.0f);
-		glVertex3f(1.0f, 1.0f, 0.0f);
-
-		glColor3f(0.1f, 0.2f, 0.5f);
-
-		glVertex3f(0.0f, 0.0f, 0.0f);
-		glVertex3f(0.0f, 0.0f, 1.0f);
-		glVertex3f(0.0f, 1.0f, 0.0f);
-
-		glVertex3f(0.0f, 1.0f, 0.0f);
-		glVertex3f(0.0f, 1.0f, 1.0f);
-		glVertex3f(0.0f, 0.0f, 1.0f);
-
-		glColor3f(0.3f, 0.2f, 0.1f);
-
-		glVertex3f(1.0f, 0.0f, 0.0f);
-		glVertex3f(1.0f, 0.0f, 1.0f);
-		glVertex3f(1.0f, 1.0f, 0.0f);
-
-		glVertex3f(1.0f, 1.0f, 0.0f);
-		glVertex3f(1.0f, 1.0f, 1.0f);
-		glVertex3f(1.0f, 0.0f, 1.0f);
-
-		glColor3f(0.5f, 0.7f, 0.6f);
-
-		glVertex3f(0.0f, 0.0f, 1.0f);
-		glVertex3f(0.0f, 1.0f, 1.0f);
-		glVertex3f(1.0f, 0.0f, 1.0f);
-
-		glVertex3f(1.0f, 0.0f, 1.0f);
-		glVertex3f(1.0f, 1.0f, 1.0f);
-		glVertex3f(0.0f, 1.0f, 1.0f);
-
-		glEnd();
+		DrawTile(0.0f, 0.0f, 0.0f, texture, 0.0f,
+			{ 1.0f, 1.0f, 1.0f }, { 0.0f, 1.0f, 1.0f }, { 0.0f, 1.0f, 0.0f }, { 1.0f, 1.0f, 0.0f }
+		);
 
 		glTranslatef(-x, -y, -z);
 	}
