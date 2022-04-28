@@ -6,7 +6,6 @@
 
 #pragma comment(lib, "opengl32.lib")
 
-#define MAX_NAME_LENGTH 256
 #define HInstance() GetModuleHandle(NULL)
 
 namespace def
@@ -119,10 +118,14 @@ namespace def
 		}
 
 	public:
-		bool Run(int screen_width, int screen_height, std::wstring title)
+		bool Run(int screen_width, int screen_height, std::wstring title, bool full_screen = false)
 		{
 			nScreenWidth = screen_width;
 			nScreenHeight = screen_height;
+
+			bFullScreen = full_screen;
+
+			sTitle = title;
 
 			WNDCLASS wc;
 			wc.style = CS_HREDRAW | CS_VREDRAW;
