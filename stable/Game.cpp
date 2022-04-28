@@ -38,7 +38,9 @@ struct sCamera
 struct sPlayer
 {
 	def::vf2d pos;
+
 	float angle;
+	float acceleration;
 };
 
 /* 
@@ -210,12 +212,39 @@ protected:
 		if (GetKey(VK_RIGHT).bHeld)
 			player.angle += (float)def::PI;
 
+		auto calculate_possible = [&](float& x, float& y)
+		{
+			float fInRadians = player.angle * (float)def::PI / 180.0f;
+
+			x = sinf(fInRadians) * 0.1f;
+			y = cosf(fInRadians) * 0.1f;
+		};
+
 		if (GetKey(VK_UP).bHeld)
 		{
-			float in_rad = player.angle * (float)def::PI / 180.0f;
-			
-			player.pos.x += sinf(in_rad) * 0.1f;
-			player.pos.y += cosf(in_rad) * 0.1f;
+			float fPossibleX;
+			float fPossibleY;
+
+			calculate_possible(fPossibleX, fPossibleY);
+
+			player.pos.x += fPossibleX;
+			player.pos.y += fPossibleY;
+
+			if (player.acceleration < 0.95f)
+				player.acceleration += 0.05f;
+		}
+		else
+		{
+			float fPossibleX;
+			float fPossibleY;
+
+			calculate_possible(fPossibleX, fPossibleY);
+
+			player.pos.x += fPossibleX * player.acceleration;
+			player.pos.y += fPossibleY * player.acceleration;
+
+			if (player.acceleration > 0.05f)
+				player.acceleration -= 0.05f;
 		}
 
 		// Move selected area...
@@ -538,7 +567,7 @@ int main()
 		if (nScreenHeight < 600)
 			nScreenHeight = 600;
 
-		if (!demo.Run(nScreenWidth, nScreenHeight, L"3D Game"))
+		if (!demo.Run(nScreenWidth, nScreenHeight, L"Car Crime City"))
 			return 1;
 	}
 	else
