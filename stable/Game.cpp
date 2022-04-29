@@ -68,6 +68,7 @@ enum TILES
 	RIGHT_ROAD,
 	BUILDING1_FLOOR,
 	BUILDING1_ROOF,
+	FONT,
 	CAR // keep it always at the bottom
 };
 
@@ -205,6 +206,9 @@ protected:
 		if (camera.pos.z < 5.0f)
 			camera.pos.z = 5.0f;
 
+		if (camera.pos.z > 17.5f)
+			camera.pos.z = 17.5f;
+
 		// Move player
 		if (GetKey(VK_LEFT).bHeld)
 			player.angle -= (float)def::PI;
@@ -268,6 +272,9 @@ protected:
 			for (int j = -nWorldHeight / 2; j < nWorldHeight / 2; j++)
 			{
 				int p = j * nWorldWidth + i;
+
+				if (i > player.pos.x + 10 || j > player.pos.y + 10 || i < player.pos.x - 10 || j < player.pos.y - 10)
+					continue;
 
 				if (!tWorld[p].isEmpty && tWorld[p].height > 0)
 				{
@@ -536,7 +543,7 @@ private:
 	}
 };
 
-int main()
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
 {
 	lua_State* L = luaL_newstate();
 
